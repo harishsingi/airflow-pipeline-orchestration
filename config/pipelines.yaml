@@ -1,0 +1,29 @@
+# One place for the schedule, retries, SLA, and owners of every DAG.
+# Change the policy here; the DAGs read the shared defaults in dags/common.py.
+dags:
+  daily_orders_pipeline:
+    schedule: daily
+    owner: data-engineering
+    retries: 2
+    retry_delay_minutes: 5
+    sla_minutes: 30
+    catchup: false
+    max_active_runs: 1
+  weekly_aggregate_pipeline:
+    schedule: "0 6 * * 1"
+    owner: data-engineering
+    retries: 2
+    retry_delay_minutes: 5
+    sla_minutes: 120
+    catchup: false
+    max_active_runs: 1
+
+data_quality:
+  not_null:
+    - order_id
+    - customer_id
+    - amount
+  unique:
+    - order_id
+  range:
+    amount: [0, 10000]

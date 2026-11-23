@@ -1,0 +1,4 @@
+# Runtime dependency for deploying the DAGs to a real Airflow instance.
+# The local runner and tests only need pyyaml.
+apache-airflow>=2.8
+pyyaml

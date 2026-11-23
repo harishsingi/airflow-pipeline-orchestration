@@ -1,0 +1,6 @@
+[project]
+name = "airflow-pipeline-orchestration"
+version = "0.1.0"
+description = "Airflow orchestration for a daily ETL pipeline and a weekly rollup: retries, SLAs, a custom data quality operator, and dependency-aware scheduling"
+requires-python = ">=3.10"
+dependencies = ["pyyaml"]
