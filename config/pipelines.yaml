@@ -1,5 +1,11 @@
 # One place for the schedule, retries, SLA, and owners of every DAG.
-# Change the policy here; the DAGs read the shared defaults in dags/common.py.
+# Change the policy here; the DAGs read it through src/config.py
+# (via dags/common.py) and the local runner reads it the same way.
+# Nothing in the DAG code hardcodes these values.
+start_date: "2026-11-01"
+warehouse_table: warehouse/orders
+staging_dataset: staging/orders
+
 dags:
   daily_orders_pipeline:
     schedule: daily
@@ -18,6 +24,10 @@ dags:
     catchup: false
     max_active_runs: 1
 
+# How many prior daily runs the weekly rollup waits for (one sensor
+# per day, so a partial week never aggregates).
+weekly_wait_days: 7
+
 data_quality:
   not_null:
     - order_id
@@ -27,3 +37,14 @@ data_quality:
     - order_id
   range:
     amount: [0, 10000]
+
+# Expected columns of the raw orders file, in order. src/schema.py
+# declares the same list in code; the two must agree (tests check).
+schema:
+  columns:
+    - order_id
+    - customer_id
+    - amount
+    - region
+    - channel
+    - order_date

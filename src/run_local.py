@@ -1,86 +1,65 @@
-"""Local runner: execute the daily pipeline steps in order, in plain Python.
+"""Local runner: execute the daily pipeline in plain Python.
 
-Mirrors the daily_orders_pipeline DAG (extract -> validate -> transform ->
-load -> notify) without needing Airflow, so the logic can be exercised and
-tested locally. Bad rows are quarantined, never loaded.
+Mirrors the ``daily_orders_pipeline`` DAG (extract -> validate ->
+transform -> load -> notify) by calling the same stage functions in
+``src/pipeline.py``, without needing Airflow, so the logic can be
+exercised and tested locally. Bad rows are quarantined, never loaded.
+
+Usage::
+
+    python -m src.generate_data
+    python -m src.run_local [--date YYYY-MM-DD] [--data-dir data/]
 """
 
-import csv
+from __future__ import annotations
+
+import argparse
+import logging
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data" / "orders.csv"
-QUARANTINE = ROOT / "data" / "quarantine.csv"
-WAREHOUSE = ROOT / "data" / "warehouse_orders.csv"
+from src.config import PROJECT_ROOT, load_config
+from src.exceptions import PipelineError
+from src.pipeline import run_daily_pipeline
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
+DEFAULT_RUN_DATE = "2026-11-22"
 
 
-def extract():
-    with DATA.open() as f:
-        rows = list(csv.DictReader(f))
-    print(f"extract:   {len(rows)} raw records staged")
-    return rows
+def main(argv: list[str] | None = None, data_dir: str | Path | None = None) -> int:
+    """Run the daily pipeline locally; return 0 on success, 1 on failure.
 
-
-def validate(rows):
-    failures = []
-    bad_idx = set()
-    for i, r in enumerate(rows):
-        if not r["customer_id"]:
-            failures.append((r["order_id"], "not_null:customer_id"))
-            bad_idx.add(i)
-    seen = {}
-    for i, r in enumerate(rows):
-        if r["order_id"] in seen:
-            failures.append((r["order_id"], "unique:order_id"))
-            bad_idx.add(i)  # only the later duplicate is bad, not the original
-        else:
-            seen[r["order_id"]] = i
-    for i, r in enumerate(rows):
-        amount = float(r["amount"])
-        if not 0 <= amount <= 10000:
-            failures.append((r["order_id"], "range:amount[0,10000]"))
-            bad_idx.add(i)
-    print(f"validate:  {len(failures)} rule failures across {len(bad_idx)} records")
-    return failures, bad_idx
-
-
-def transform(rows, bad_idx):
-    clean = [r for i, r in enumerate(rows) if i not in bad_idx]
-    for r in clean:
-        r["amount_usd"] = f"{float(r['amount']):.2f}"
-    print(f"transform: {len(clean)} clean records modeled")
-    return clean
-
-
-def load(clean):
-    with WAREHOUSE.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(clean[0].keys()))
-        writer.writeheader()
-        writer.writerows(clean)
-    print(f"load:      {len(clean)} records written to warehouse/orders (partition 2026-11-22)")
-
-
-def quarantine(rows, bad_idx):
-    bad = [r for i, r in enumerate(rows) if i in bad_idx]
-    with QUARANTINE.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(bad[0].keys()))
-        writer.writeheader()
-        writer.writerows(bad)
-    print(f"quarantine: {len(bad)} records quarantined (never to warehouse)")
-
-
-def main():
-    if not DATA.exists():
-        print("data/orders.csv missing; run: python -m src.generate_data", file=sys.stderr)
-        sys.exit(1)
-    rows = extract()
-    failures, bad_idx = validate(rows)
-    clean = transform(rows, bad_idx)
-    quarantine(rows, bad_idx)
-    load(clean)
-    print(f"notify:    daily_orders_pipeline succeeded, {len(clean)} rows")
+    ``data_dir`` is injectable so tests can run against a temporary
+    directory instead of the repo's ``data/`` folder.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--date", default=DEFAULT_RUN_DATE)
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    directory = Path(data_dir) if data_dir is not None else args.data_dir
+    source = directory / "orders.csv"
+    try:
+        config = load_config()
+        result = run_daily_pipeline(
+            source_path=source,
+            output_dir=directory,
+            run_date=args.date,
+            config=config,
+        )
+    except PipelineError as exc:
+        logger.error("daily pipeline failed: %s", exc)
+        return 1
+    logger.info(
+        "notify: daily_orders_pipeline succeeded, %d rows loaded "
+        "(%d quarantined)",
+        result.rows_loaded,
+        result.rows_rejected,
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
